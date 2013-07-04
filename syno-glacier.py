@@ -3,6 +3,8 @@
 from logging import StreamHandler, INFO, getLogger
 from optparse import OptionParser
 from os import path
+from datetime import datetime
+import sqlite3
 import boto.glacier.layer2
 
 has_colorlog = True
@@ -37,29 +39,29 @@ class SynoGlacier(object):
 		parser = OptionParser()
 
 		parser.add_option("-k", "--aws_access_key_id", action="store", type="string", dest="aws_access_key_id",
-						  help="Your AWS Access-Key")
+							help="Your AWS Access-Key")
 		parser.add_option("-s", "--aws_secret_access_key", action="store", type="string", dest="aws_secret_access_key",
-						  help="Your AWS Access-Secret")
+							help="Your AWS Access-Secret")
 		parser.add_option("-r", "--region", action="store", type="string", dest="region", default="us-east-1",
-						  help="AWS Region Name, one of "+(', '.join(map(lambda r:r.name, boto.glacier.regions()))))
+							help="AWS Region Name, one of "+(', '.join(map(lambda r:r.name, boto.glacier.regions()))))
 
 		parser.add_option("-v", "--vault", action="store", type="string", dest="vault",
-						  help="Glacier-Vault to use. Only required when more then one Synology-DistStation Backup-Jobs write to your Glacier")
+							help="Glacier-Vault to use. Only required when more then one Synology-DistStation Backup-Jobs write to your Glacier")
 
 		parser.add_option("-d", "--dir", action="store", type="string", dest="dir", default=".",
-						  help="Target Directory, defaults to current working directory")
+							help="Target Directory, defaults to current working directory")
 
 		parser.add_option("--port", action="store", type="int", dest="port", default=80,
-						  help="TCP Port")
+							help="TCP Port")
 
 		parser.add_option("--proxy", action="store", type="string", dest="proxy",
-						  help="HTTP-Proxy Hostname")
+							help="HTTP-Proxy Hostname")
 		parser.add_option("--proxy_port", action="store", type="string", dest="proxy_port",
-						  help="HTTP-Proxy Port")
+							help="HTTP-Proxy Port")
 		parser.add_option("--proxy_user", action="store", type="string", dest="proxy_user",
-						  help="HTTP-Proxy Username")
+							help="HTTP-Proxy Username")
 		parser.add_option("--proxy_pass", action="store", type="string", dest="proxy_pass",
-						  help="HTTP-Proxy Password")
+							help="HTTP-Proxy Password")
 
 		(options, args) = parser.parse_args()
 
@@ -118,7 +120,7 @@ class SynoGlacier(object):
 		inventory = self.fetch_inventory(vault, jobs)
 
 		logger.info('requesting inventory of mapping-vault')
-		mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
+		#mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
 
 		if inventory == None or mapping_inventory == None:
 			return logger.warn('one of the vaults has not yet finished its inventory task. please wait some more hours until it\'s completed and run this command again')
@@ -142,10 +144,27 @@ class SynoGlacier(object):
 
 		logger.info('successfully fetched mapping database as %s', mapping_filename)
 
-		logger.info('reading mapping database', mapping_filename)
-		#con = sqlite3.connect(mapping_filename)
-		#cur = con.cursor()
-		#cur.execute("select 1 as a")
+		logger.info('reading mapping database')
+		con = sqlite3.connect(mapping_filename)
+		cur = con.cursor()
+
+		backup_info = {}
+		cur.execute("SELECT key, value FROM backup_info_tb")
+		for row in cur:
+			backup_info[row[0]] = row[1]
+
+
+
+		logger.info('identfied backup as task "%s" from folder "%s" on DiskStation "%s", last run at %s',
+			backup_info['taskName'], backup_info['bkpFolder'], backup_info['hostName'], datetime.fromtimestamp(float(backup_info['lastBkpTime'])).isoformat())
+
+		# TODO: allow selection of files to restore
+
+		#cur.execute("SELECT shareName, basePath, archiveID, fileSize FROM file_info_tb")
+		#for row in cur:
+		#	logger.info
+
+
 
 
 	# List active jobs and check whether any inventory retrieval
