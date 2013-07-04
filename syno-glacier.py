@@ -2,6 +2,7 @@
 
 from logging import StreamHandler, INFO, getLogger
 from optparse import OptionParser
+from os import path
 import boto.glacier.layer2
 
 has_colorlog = True
@@ -45,6 +46,9 @@ class SynoGlacier(object):
 		parser.add_option("-v", "--vault", action="store", type="string", dest="vault",
 						  help="Glacier-Vault to use. Only required when more then one Synology-DistStation Backup-Jobs write to your Glacier")
 
+		parser.add_option("-d", "--dir", action="store", type="string", dest="dir", default=".",
+						  help="Target Directory, defaults to current working directory")
+
 		parser.add_option("--port", action="store", type="int", dest="port", default=80,
 						  help="TCP Port")
 
@@ -56,9 +60,6 @@ class SynoGlacier(object):
 						  help="HTTP-Proxy Username")
 		parser.add_option("--proxy_pass", action="store", type="string", dest="proxy_pass",
 						  help="HTTP-Proxy Password")
-
-		parser.add_option("-d", "--debug", action="store_true", dest="debug",
-						  help="HTTP-Proxy Username")
 
 		(options, args) = parser.parse_args()
 
@@ -109,33 +110,58 @@ class SynoGlacier(object):
 		vault = layer2.get_vault(options.vault)
 		mapping_vault = layer2.get_vault(options.vault+"_mapping")
 
+		logger.info('requesting job-listings from vaults')
+		jobs = vault.list_jobs()
+		mapping_jobs = mapping_vault.list_jobs()
+
 		logger.info('requesting inventory of backup-vault')
-		inventory = self.fetch_inventory(vault)
+		inventory = self.fetch_inventory(vault, jobs)
 
 		logger.info('requesting inventory of mapping-vault')
-		mapping_inventory = self.fetch_inventory(mapping_vault)
+		mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
 
 		if inventory == None or mapping_inventory == None:
 			return logger.warn('one of the vaults has not yet finished its inventory task. please wait some more hours until it\'s completed and run this command again')
 
-		print inventory
+		if len(mapping_inventory['ArchiveList']) == 0:
+			return logger.error('mapping-vault does not contain a archive')
+
+		if len(mapping_inventory['ArchiveList']) > 1:
+			logger.warn('mapping-vault does not contains more then one archive, trying to use the first one')
+
+		mapping_archive = mapping_inventory['ArchiveList'][0]
+
+		logger.info('requesting mapping-archive from mapping-vault')
+		mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive, mapping_jobs)
+
+		mapping_filename = path.join(options.dir, '.mapping.sqlite')
+
+		mapping_database = open(mapping_filename, 'wb')
+		mapping_database.write(mapping_archive_data)
+		mapping_database.close()
+
+		logger.info('successfully fetched mapping database as %s', mapping_filename)
+
+		logger.info('reading mapping database', mapping_filename)
+		#con = sqlite3.connect(mapping_filename)
+		#cur = con.cursor()
+		#cur.execute("select 1 as a")
 
 
 	# List active jobs and check whether any inventory retrieval
 	# has been completed, and whether any is in progress. We want
 	# to find the latest finished job, or that failing the latest
 	# in progress job.
-	def fetch_inventory(self, vault):
+	def fetch_inventory(self, vault, jobs):
 		logger = self.logger
 
-		jobs = vault.list_jobs()
 		for job in jobs:
 			if job.action == "InventoryRetrieval":
 
 				# As soon as a finished inventory job is found, we're done.
 				if job.completed:
 					logger.info('found finished inventory job: %s', job)
-					logger.info('Fetching results of finished inventory retrieval.')
+					logger.info('fetching results of finished inventory retrieval')
 					
 					response = job.get_output()
 					inventory = response.copy()
@@ -154,7 +180,33 @@ class SynoGlacier(object):
 
 		return None
 
+	def fetch_archive(self, vault, archive, jobs):
+		logger = self.logger
 
+		for job in jobs:
+			if job.action == "ArchiveRetrieval" and job.archive_id == archive["ArchiveId"]:
+
+				# As soon as a finished inventory job is found, we're done.
+				if job.completed:
+					logger.info('found finished retrival job for the requested archive: %s', job)
+					logger.info('fetching results of finished retrival (%u bytes)', job.archive_size)
+					
+					response = job.get_output(validate_checksum=True)
+					content = response.read()
+					return content
+
+				logger.info('found running retrival job for the requested archive: %s', job)
+				logger.info("please wait some more hours until it's completed")
+				return None
+
+		logger.info('no retrival job for the requested archive finished or running; starting a new job')
+
+		try:
+			job = vault.retrieve_archive(archive["ArchiveId"])
+		except boto.glacier.exceptions.UnexpectedHTTPResponseError as e:
+			logger.error('failed to create a new archive retrieval job (#%s: %s)', e.code, e.body)
+
+		return None
 
 if __name__ == "__main__":
 	SynoGlacier().run()
