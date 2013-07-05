@@ -2,8 +2,10 @@
 
 from logging import StreamHandler, INFO, getLogger
 from optparse import OptionParser
+import os, errno
 from os import path
 from datetime import datetime
+from time import sleep
 import sqlite3
 import boto.glacier.layer2
 
@@ -13,13 +15,23 @@ try:
 except ImportError:
 	has_colorlog = False
 
+def mkdir_p(path):
+	try:
+		os.makedirs(path)
+	except OSError as exc: # Python >2.5
+		if exc.errno == errno.EEXIST and os.path.isdir(path):
+			pass
+		else: raise
+
 class SynoGlacier(object):
 	def run(self):
 
 		stream = StreamHandler()
 		stream.setLevel(INFO)
 		if has_colorlog:
-			formatter = ColoredFormatter("%(log_color)s%(levelname)-8s%(reset)s %(message)s",
+			formatter = ColoredFormatter(
+				format= "%(log_color)s%(asctime)s %(levelname)-8s%(reset)s %(message)s",
+				datefmt="%H:%M:%S",
 				log_colors={
 					'DEBUG':    'white',
 					'INFO':     'green',
@@ -48,8 +60,8 @@ class SynoGlacier(object):
 		parser.add_option("-v", "--vault", action="store", type="string", dest="vault",
 							help="Glacier-Vault to use. Only required when more then one Synology-DistStation Backup-Jobs write to your Glacier")
 
-		parser.add_option("-d", "--dir", action="store", type="string", dest="dir", default=".",
-							help="Target Directory, defaults to current working directory")
+		parser.add_option("-d", "--dir", action="store", type="string", dest="dir", default="./restore/",
+							help="Target Directory, defaults to current a 'restore'-folder in the current working directory")
 
 		parser.add_option("--port", action="store", type="int", dest="port", default=80,
 							help="TCP Port")
@@ -112,18 +124,17 @@ class SynoGlacier(object):
 		vault = layer2.get_vault(options.vault)
 		mapping_vault = layer2.get_vault(options.vault+"_mapping")
 
-		logger.info('requesting job-listings from vaults')
-		jobs = vault.list_jobs()
+		logger.info('requesting job-listings from mapping-vault')
 		mapping_jobs = mapping_vault.list_jobs()
 
-		logger.info('requesting inventory of backup-vault')
-		inventory = self.fetch_inventory(vault, jobs)
-
 		logger.info('requesting inventory of mapping-vault')
-		#mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
+		mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
 
-		if inventory == None or mapping_inventory == None:
-			return logger.warn('one of the vaults has not yet finished its inventory task. please wait some more hours until it\'s completed and run this command again')
+		if mapping_inventory == None:
+			logger.warn('the mapping-vault has not yet finished its inventory task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
+			while mapping_inventory == None:
+				sleep(30*60)
+				mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
 
 		if len(mapping_inventory['ArchiveList']) == 0:
 			return logger.error('mapping-vault does not contain a archive')
@@ -136,6 +147,15 @@ class SynoGlacier(object):
 		logger.info('requesting mapping-archive from mapping-vault')
 		mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive, mapping_jobs)
 
+		if mapping_archive_data == None:
+			logger.warn('the mapping-archive has not yet finished its retrieval task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
+			while mapping_archive_data == None:
+				sleep(30*60)
+				mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive, mapping_jobs)
+
+		logger.info('creating target directory (if not existant)')
+
+		mkdir_p(options.dir)
 		mapping_filename = path.join(options.dir, '.mapping.sqlite')
 
 		mapping_database = open(mapping_filename, 'wb')
@@ -152,7 +172,6 @@ class SynoGlacier(object):
 		cur.execute("SELECT key, value FROM backup_info_tb")
 		for row in cur:
 			backup_info[row[0]] = row[1]
-
 
 
 		logger.info('identfied backup as task "%s" from folder "%s" on DiskStation "%s", last run at %s',
@@ -187,13 +206,12 @@ class SynoGlacier(object):
 					return inventory
 
 				logger.info('found running inventory job: %s', job)
-				logger.info("please wait some more hours until it's completed")
 				return None
 
 		logger.info('no inventory jobs finished or running; starting a new job')
 
 		try:
-			job = vault.retrieve_inventory_job()
+			job = vault.retrieve_inventory()
 		except boto.glacier.exceptions.UnexpectedHTTPResponseError as e:
 			logger.error('failed to create a new inventory retrieval job (#%s: %s)', e.code, e.body)
 
