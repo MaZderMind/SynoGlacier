@@ -134,6 +134,7 @@ class SynoGlacier(object):
 			logger.warn('the mapping-vault has not yet finished its inventory task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
 			while mapping_inventory == None:
 				sleep(30*60)
+				mapping_jobs = mapping_vault.list_jobs()
 				mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
 
 		if len(mapping_inventory['ArchiveList']) == 0:
@@ -151,6 +152,7 @@ class SynoGlacier(object):
 			logger.warn('the mapping-archive has not yet finished its retrieval task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
 			while mapping_archive_data == None:
 				sleep(30*60)
+				mapping_jobs = mapping_vault.list_jobs()
 				mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive, mapping_jobs)
 
 		logger.info('creating target directory (if not existant)')
