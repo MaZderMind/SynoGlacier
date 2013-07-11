@@ -125,17 +125,15 @@ class SynoGlacier(object):
 		mapping_vault = layer2.get_vault(options.vault+"_mapping")
 
 		logger.info('requesting job-listings from mapping-vault')
-		mapping_jobs = mapping_vault.list_jobs()
 
 		logger.info('requesting inventory of mapping-vault')
-		mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
+		mapping_inventory = self.fetch_inventory(mapping_vault)
 
 		if mapping_inventory == None:
 			logger.warn('the mapping-vault has not yet finished its inventory task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
 			while mapping_inventory == None:
 				sleep(30*60)
-				mapping_jobs = mapping_vault.list_jobs()
-				mapping_inventory = self.fetch_inventory(mapping_vault, mapping_jobs)
+				mapping_inventory = self.fetch_inventory(mapping_vault)
 
 		if len(mapping_inventory['ArchiveList']) == 0:
 			return logger.error('mapping-vault does not contain a archive')
@@ -146,14 +144,13 @@ class SynoGlacier(object):
 		mapping_archive = mapping_inventory['ArchiveList'][0]
 
 		logger.info('requesting mapping-archive from mapping-vault')
-		mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive, mapping_jobs)
+		mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
 
 		if mapping_archive_data == None:
 			logger.warn('the mapping-archive has not yet finished its retrieval task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
 			while mapping_archive_data == None:
 				sleep(30*60)
-				mapping_jobs = mapping_vault.list_jobs()
-				mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive, mapping_jobs)
+				mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
 
 		logger.info('creating target directory (if not existant)')
 
@@ -192,8 +189,9 @@ class SynoGlacier(object):
 	# has been completed, and whether any is in progress. We want
 	# to find the latest finished job, or that failing the latest
 	# in progress job.
-	def fetch_inventory(self, vault, jobs):
+	def fetch_inventory(self, vault):
 		logger = self.logger
+		jobs = vault.list_jobs()
 
 		for job in jobs:
 			if job.action == "InventoryRetrieval":
@@ -219,8 +217,9 @@ class SynoGlacier(object):
 
 		return None
 
-	def fetch_archive(self, vault, archive, jobs):
+	def fetch_archive(self, vault, archive):
 		logger = self.logger
+		jobs = vault.list_jobs()
 
 		for job in jobs:
 			if job.action == "ArchiveRetrieval" and job.archive_id == archive["ArchiveId"]:
@@ -235,7 +234,6 @@ class SynoGlacier(object):
 					return content
 
 				logger.info('found running retrival job for the requested archive: %s', job)
-				logger.info("please wait some more hours until it's completed")
 				return None
 
 		logger.info('no retrival job for the requested archive finished or running; starting a new job')
