@@ -77,6 +77,10 @@ class SynoGlacier(object):
 
 		(options, args) = parser.parse_args()
 
+		# none-optional options ;) - I want the arguments to be named
+		if not options.aws_access_key_id or not options.aws_secret_access_key:
+			return logger.error("--aws_access_key_id and --aws_secret_access_key are not optional. supply them. now!")
+
 		logger.info('connecting to glacier')
 		layer2 = boto.glacier.layer2.Layer2(
 			is_secure = True,
