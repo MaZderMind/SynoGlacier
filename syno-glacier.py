@@ -8,6 +8,7 @@ from datetime import datetime
 from time import sleep
 import sqlite3
 import boto.glacier.layer2
+import npyscreen
 
 has_colorlog = True
 try:
@@ -61,7 +62,7 @@ class SynoGlacier(object):
 							help="Glacier-Vault to use. Only required when more then one Synology-DistStation Backup-Jobs write to your Glacier")
 
 		parser.add_option("-d", "--dir", action="store", type="string", dest="dir", default="./restore/",
-							help="Target Directory, defaults to current a 'restore'-folder in the current working directory")
+							help="Target Directory, defaults to a 'restore'-folder in the current working directory")
 
 		parser.add_option("--port", action="store", type="int", dest="port", default=80,
 							help="TCP Port")
@@ -78,8 +79,8 @@ class SynoGlacier(object):
 		(options, args) = parser.parse_args()
 
 		# none-optional options ;) - I want the arguments to be named
-		if not options.aws_access_key_id or not options.aws_secret_access_key:
-			return logger.error("--aws_access_key_id and --aws_secret_access_key are not optional. supply them. now!")
+		if not options.aws_access_key_id or not options.aws_secret_access_key or not options.region:
+			return logger.error("--aws_access_key_id, --aws_secret_access_key and --region are not optional")
 
 		logger.info('connecting to glacier')
 		layer2 = boto.glacier.layer2.Layer2(
@@ -180,11 +181,13 @@ class SynoGlacier(object):
 		logger.info('identfied backup as task "%s" from folder "%s" on DiskStation "%s", last run at %s',
 			backup_info['taskName'], backup_info['bkpFolder'], backup_info['hostName'], datetime.fromtimestamp(float(backup_info['lastBkpTime'])).isoformat())
 
-		# TODO: allow selection of files to restore
+		cur.execute("SELECT shareName, basePath, archiveID, fileSize FROM file_info_tb")
+		dialog = FileSelectionDialog(backup_info = backup_info, file_info = cur.fetchall())
 
-		#cur.execute("SELECT shareName, basePath, archiveID, fileSize FROM file_info_tb")
-		#for row in cur:
-		#	logger.info
+		files = dialog.edit()
+
+		for row in files:
+			logger.info
 
 
 
@@ -248,6 +251,115 @@ class SynoGlacier(object):
 			logger.error('failed to create a new archive retrieval job (#%s: %s)', e.code, e.body)
 
 		return None
+
+class FileSelectionDialog(npyscreen.NPSApp):
+	formTitle = "Restore Folders"
+	statusText = "Currently %u folders with %u files in them (total: %s) are selected for resatore from Amazon Glacier."
+
+	def main(self, backup_info, file_info):
+		self.backup_info = backup_info;
+		self.file_info = cur.fetchall()
+
+	def edit(self):
+		return npyscreen.wrapper_basic(self.show_form)
+
+
+
+	def updateText(self):
+		self.status.value = TestApp.statusText % self.collectNodeStatistics()
+		self.status.display()
+		self.tree._display()
+		return
+
+	def collectNodeStatistics(self):
+		selectedNodes = self.tree.get_selected_objects(return_node=True)
+		dcnt = fcnt = szsum = 0
+
+		files = []
+		for node in selectedNodes:
+			dcnt += 1
+			if hasattr(node, 'files'):
+				fcnt += len(node.files)
+				files.extend(node.files)
+				for file in node.files:
+					try:
+						szsum += file[3]
+					except TypeError:
+						pass
+
+		return (dcnt, fcnt, szsum)
+
+
+	def on_ok(self):
+		return True
+
+	def show_form(self, *args):
+		form = npyscreen.ActionForm(name=FileSelectionDialog.formTitle)
+		status = form.add(npyscreen.FixedText, value=FileSelectionDialog.statusText % (0, 0, 0), editable=False)
+		tree = form.add(npyscreen.MLTreeMultiSelect, rely=4)
+
+		tree._display = tree.display
+		tree.display = self.updateText
+
+		self.status = status
+		self.tree = tree
+		
+		treedata = npyscreen.NPSTreeData(content=self.backup_info['bkpFolder']+' on '+self.backup_info['hostName'], ignoreRoot=False)
+		self.build_treedata('', treedata)
+		tree.values = treedata
+
+		form.on_ok = self.on_ok
+		if not form.edit():
+			return False
+
+		return tree.get_selected_objects(return_node=True)
+
+
+	def build_treedata(self, prefix, parent):
+		#self.logger.info('entering build_treedata() with prefix="%s" and parent="%s"', prefix, parent.getContentForDisplay())
+
+		handled_folders = []
+		parent.files = []
+
+		# iterate over all rows
+		for row in self.file_info:
+			# test if the row begins with the desired prefix
+			if row[1].find(prefix) == 0:
+				# test if the row specifies a file below that predfix
+				subpath = row[1][len(prefix):]
+
+				# it is a file
+				if subpath.find('/') == -1:
+					# TODO: count up somehow
+					parent.files.append(row)
+					#parent.newChild(content="FILE "+subpath)
+
+				# it is a folder
+				else:
+					# test if we already had that folder
+					# generate the folder-name from the subpath
+					dirname = subpath[:subpath.find('/')]
+					dirpath = prefix+dirname+"/"
+
+					#self.logger.info('   path="%s", subpath="%s", dirname="%s", dirpath="%s"', row[1], subpath, dirname, dirpath)
+
+					if handled_folders.count(dirpath) > 0:
+						continue
+
+					# remember that we already had this folder
+					handled_folders.append(dirpath)
+
+					# add a node for that folder to the tree
+					node = parent.newChild(content="DIR "+dirname)
+
+					# recurse for files below that folder
+					self.build_treedata(dirpath, node)
+
+
+		parent.setContent(parent.getContent() + " (%u Files)" % len(parent.files))
+
+
+
 
 if __name__ == "__main__":
 	SynoGlacier().run()
