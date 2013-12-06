@@ -186,6 +186,9 @@ class SynoGlacier(object):
 
 		files = dialog.edit()
 
+		if files == False:
+			return logger.error('stopping recovery')
+
 		for row in files:
 			logger.info
 
@@ -254,11 +257,11 @@ class SynoGlacier(object):
 
 class FileSelectionDialog(npyscreen.NPSApp):
 	formTitle = "Restore Folders"
-	statusText = "Currently %u folders with %u files in them (total: %s) are selected for resatore from Amazon Glacier."
+	statusText = "Currently %u folders with %u files in them (total: %s) are selected for restore from Amazon Glacier."
 
-	def main(self, backup_info, file_info):
-		self.backup_info = backup_info;
-		self.file_info = cur.fetchall()
+	def __init__(self, backup_info, file_info):
+		self.backup_info = backup_info
+		self.file_info = file_info
 
 	def edit(self):
 		return npyscreen.wrapper_basic(self.show_form)
@@ -266,7 +269,7 @@ class FileSelectionDialog(npyscreen.NPSApp):
 
 
 	def updateText(self):
-		self.status.value = TestApp.statusText % self.collectNodeStatistics()
+		self.status.value = FileSelectionDialog.statusText % self.collectNodeStatistics()
 		self.status.display()
 		self.tree._display()
 		return
@@ -350,7 +353,7 @@ class FileSelectionDialog(npyscreen.NPSApp):
 					handled_folders.append(dirpath)
 
 					# add a node for that folder to the tree
-					node = parent.newChild(content="DIR "+dirname)
+					node = parent.newChild(content=dirname.encode('UTF-8'))
 
 					# recurse for files below that folder
 					self.build_treedata(dirpath, node)
