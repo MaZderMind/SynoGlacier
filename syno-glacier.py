@@ -24,6 +24,14 @@ def mkdir_p(path):
 			pass
 		else: raise
 
+def sizeof_fmt(num):
+	for x in ['bytes','KB','MB','GB']:
+		if num < 1024.0:
+			return "%3.1f %s" % (num, x)
+		num /= 1024.0
+
+	return "%3.1f %s" % (num, 'TB')
+
 class SynoGlacier(object):
 	def run(self):
 
@@ -146,7 +154,7 @@ class SynoGlacier(object):
 		if len(mapping_inventory['ArchiveList']) > 1:
 			logger.warn('mapping-vault does not contains more then one archive, trying to use the first one')
 
-		mapping_archive = mapping_inventory['ArchiveList'][0]
+		mapping_archive = mapping_inventory['ArchiveList'][0]["ArchiveId"]
 
 		logger.info('requesting mapping-archive from mapping-vault')
 		mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
@@ -189,8 +197,31 @@ class SynoGlacier(object):
 		if files == False:
 			return logger.error('stopping recovery')
 
+		# TODO: save selected and completed files and offer an option to resume
+
+		logger.info(FileSelectionDialog.restoringText % dialog.collectNodeStatistics())
+		logger.warn("It will take another 4 hours to start the first retrieval. this script will sleep until then and check again every 30 minutes")
+
 		for row in files:
-			logger.info
+			logger.info("fetching %s (%s)" % (row[1], sizeof_fmt(row[3])));
+
+			restored_file_data = self.fetch_archive(vault, row[2])
+			while restored_file_data == None:
+				sleep(30*60)
+				restored_file_data = self.fetch_archive(vault, row[2])
+
+			restored_filename = path.join(options.dir, row[1])
+
+			mkdir_p(path.dirname(restored_filename))
+
+			restored_file = open(restored_filename, 'wb')
+			restored_file.write(restored_file_data)
+			restored_file.close()
+
+		logger.info("finished restore");
+		logger.info("have a nice dataloss-free day");
+
+
 
 
 
@@ -232,12 +263,12 @@ class SynoGlacier(object):
 		jobs = vault.list_jobs()
 
 		for job in jobs:
-			if job.action == "ArchiveRetrieval" and job.archive_id == archive["ArchiveId"]:
+			if job.action == "ArchiveRetrieval" and job.archive_id == archive:
 
 				# As soon as a finished inventory job is found, we're done.
 				if job.completed:
 					logger.info('found finished retrival job for the requested archive: %s', job)
-					logger.info('fetching results of finished retrival (%u bytes)', job.archive_size)
+					logger.info('fetching results of finished retrival (%s)', sizeof_fmt(job.archive_size))
 					
 					response = job.get_output(validate_checksum=True)
 					content = response.read()
@@ -249,7 +280,7 @@ class SynoGlacier(object):
 		logger.info('no retrival job for the requested archive finished or running; starting a new job')
 
 		try:
-			job = vault.retrieve_archive(archive["ArchiveId"])
+			job = vault.retrieve_archive(archive)
 		except boto.glacier.exceptions.UnexpectedHTTPResponseError as e:
 			logger.error('failed to create a new archive retrieval job (#%s: %s)', e.code, e.body)
 
@@ -257,7 +288,8 @@ class SynoGlacier(object):
 
 class FileSelectionDialog(npyscreen.NPSApp):
 	formTitle = "Restore Folders"
-	statusText = "Currently %u folders with %u files in them (total: %s) are selected for restore from Amazon Glacier."
+	statusText = "Currently %u folders with %u files in them (total: %s) are selected for restore"
+	restoringText = "Restoring %u folders with %u files in them (total: %s)"
 
 	def __init__(self, backup_info, file_info):
 		self.backup_info = backup_info
@@ -290,7 +322,7 @@ class FileSelectionDialog(npyscreen.NPSApp):
 					except TypeError:
 						pass
 
-		return (dcnt, fcnt, szsum)
+		return (dcnt, fcnt, sizeof_fmt(szsum))
 
 
 	def on_ok(self):
@@ -315,7 +347,13 @@ class FileSelectionDialog(npyscreen.NPSApp):
 		if not form.edit():
 			return False
 
-		return tree.get_selected_objects(return_node=True)
+		nodes = tree.get_selected_objects(return_node=True)
+		files = []
+		for node in nodes:
+			if hasattr(node, 'files'):
+				files.extend(node.files)
+
+		return files
 
 
 	def build_treedata(self, prefix, parent):
