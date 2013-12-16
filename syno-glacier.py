@@ -71,6 +71,8 @@ class SynoGlacier(object):
 
 		parser.add_option("-d", "--dir", action="store", type="string", dest="dir", default="./restore/",
 							help="Target Directory, defaults to a 'restore'-folder in the current working directory")
+		parser.add_option("-o", "--offline", action="store_true", dest="offline",
+							help="Use the offline available mapping-database (if available) and avoid the 8h retrieval time")
 
 		parser.add_option("--port", action="store", type="int", dest="port", default=80,
 							help="TCP Port")
@@ -131,49 +133,60 @@ class SynoGlacier(object):
 				return logger.warning('more then one vault looking like a Synology DiskStation Backup was found. Specify which to use via the -v/--vault option')
 
 			options.vault = dsvaults[0]
-		
+
 		logger.info('using vault %s', options.vault)
 
-		vault = layer2.get_vault(options.vault)
-		mapping_vault = layer2.get_vault(options.vault+"_mapping")
-
-		logger.info('requesting job-listings from mapping-vault')
-
-		logger.info('requesting inventory of mapping-vault')
-		mapping_inventory = self.fetch_inventory(mapping_vault)
-
-		if mapping_inventory == None:
-			logger.warn('the mapping-vault has not yet finished its inventory task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
-			while mapping_inventory == None:
-				sleep(30*60)
-				mapping_inventory = self.fetch_inventory(mapping_vault)
-
-		if len(mapping_inventory['ArchiveList']) == 0:
-			return logger.error('mapping-vault does not contain a archive')
-
-		if len(mapping_inventory['ArchiveList']) > 1:
-			logger.warn('mapping-vault does not contains more then one archive, trying to use the first one')
-
-		mapping_archive = mapping_inventory['ArchiveList'][0]["ArchiveId"]
-
-		logger.info('requesting mapping-archive from mapping-vault')
-		mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
-
-		if mapping_archive_data == None:
-			logger.warn('the mapping-archive has not yet finished its retrieval task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
-			while mapping_archive_data == None:
-				sleep(30*60)
-				mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
-
-		logger.info('creating target directory (if not existant)')
 
 		mkdir_p(options.dir)
 		mapping_filename = path.join(options.dir, '.mapping.sqlite')
 
-		with open(mapping_filename, 'wb') as mapping_database:
-			mapping_database.write(mapping_archive_data)
+		if options.offline:
+			try:
+				logger.info('using mapping-archive from offline file')
+				with open(mapping_filename, 'rb'):
+					pass
+			except IOError:
+				return logger.error('no offline-mapping-archive found, run without -o/--offline')
 
-		logger.info('successfully fetched mapping database as %s', mapping_filename)
+		else:
+			vault = layer2.get_vault(options.vault)
+			mapping_vault = layer2.get_vault(options.vault+"_mapping")
+
+			logger.info('requesting job-listings from mapping-vault')
+
+			logger.info('requesting inventory of mapping-vault')
+			mapping_inventory = self.fetch_inventory(mapping_vault)
+
+			if mapping_inventory == None:
+				logger.warn('the mapping-vault has not yet finished its inventory task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
+				while mapping_inventory == None:
+					sleep(30*60)
+					mapping_inventory = self.fetch_inventory(mapping_vault)
+
+			if len(mapping_inventory['ArchiveList']) == 0:
+				return logger.error('mapping-vault does not contain a archive')
+
+			if len(mapping_inventory['ArchiveList']) > 1:
+				logger.warn('mapping-vault does not contains more then one archive, trying to use the first one')
+
+			mapping_archive = mapping_inventory['ArchiveList'][0]["ArchiveId"]
+
+			logger.info('requesting mapping-archive from mapping-vault')
+			mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
+
+			if mapping_archive_data == None:
+				logger.warn('the mapping-archive has not yet finished its retrieval task. this script will sleep until it\'s finished and check again every 30 minutes, but you can also cancel it and restart it later')
+				while mapping_archive_data == None:
+					sleep(30*60)
+					mapping_archive_data = self.fetch_archive(mapping_vault, mapping_archive)
+
+			logger.info('creating target directory (if not existant)')
+
+			with open(mapping_filename, 'wb') as mapping_database:
+				mapping_database.write(mapping_archive_data)
+
+			logger.info('successfully fetched mapping database as %s', mapping_filename)
+
 
 		logger.info('reading mapping database')
 		con = sqlite3.connect(mapping_filename)
