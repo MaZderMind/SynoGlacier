@@ -204,16 +204,21 @@ class SynoGlacier(object):
 		cur.execute("SELECT shareName, basePath, archiveID, fileSize FROM file_info_tb")
 		dialog = FileSelectionDialog(backup_info = backup_info, file_info = cur.fetchall())
 
+		# TODO: ask for internet download speed
 		files = dialog.edit()
 
 		if files == False:
 			return logger.error('stopping recovery')
 
 		# TODO: save selected and completed files and offer an option to resume
+		# TODO: calculate GBs transferrable per 4h on the selected internet speed
 
 		logger.info(FileSelectionDialog.restoringText % dialog.collectNodeStatistics())
 		logger.warn("It will take another 4 hours to start the first retrieval. this script will sleep until then and check again every 30 minutes")
 
+
+		# TODO: request as many fiels as can fit into the calculated numbet of GBs at a bunch, wait 4h until the first
+		#       file is ready, request the next bunch of GBs and while waiting for them, download the previous bunch
 		for row in files:
 			logger.info("fetching %s (%s)" % (row[1], sizeof_fmt(row[3])));
 
