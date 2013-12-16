@@ -170,9 +170,8 @@ class SynoGlacier(object):
 		mkdir_p(options.dir)
 		mapping_filename = path.join(options.dir, '.mapping.sqlite')
 
-		mapping_database = open(mapping_filename, 'wb')
-		mapping_database.write(mapping_archive_data)
-		mapping_database.close()
+		with open(mapping_filename, 'wb') as mapping_database:
+			mapping_database.write(mapping_archive_data)
 
 		logger.info('successfully fetched mapping database as %s', mapping_filename)
 
@@ -214,9 +213,8 @@ class SynoGlacier(object):
 
 			mkdir_p(path.dirname(restored_filename))
 
-			restored_file = open(restored_filename, 'wb')
-			restored_file.write(restored_file_data)
-			restored_file.close()
+			with open(restored_filename, 'wb') as restored_file:
+				restored_file.write(restored_file_data)
 
 		logger.info("finished restore");
 		logger.info("have a nice dataloss-free day");
